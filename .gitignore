@@ -1,4 +1,4 @@
-log*
-.vscode
-tf_ops
-*.pyc
+log*/
+.vscode/
+tf_ops/
+*×/.pyc
