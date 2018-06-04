@@ -1,0 +1,4 @@
+log*
+.vscode
+tf_ops
+*.pyc

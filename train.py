@@ -6,73 +6,85 @@ import tensorflow as tf
 import importlib
 import os
 import sys
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.dirname(BASE_DIR)
 
+# code base dir
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(BASE_DIR, 'utils'))
 sys.path.append(os.path.join(BASE_DIR, 'models'))
+
 import provider
 import pc_util
 import scannet_dataset
 
+# ArgumentParser
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU 0]')
 parser.add_argument('--model', default='pointnet2_sem_seg', help='Model name [default: pointnet2_sem_seg]')
 parser.add_argument('--log_dir', default='log_18', help='Log dir [default: log]')
-parser.add_argument('--num_point', type=int, default=16384, help='Point Number [default: 8192]')
-parser.add_argument('--max_epoch', type=int, default=501, help='Epoch to run [default: 501]')
+parser.add_argument('--num_point', type=int, default=4196, help='Point Number [default: 8192]')
+parser.add_argument('--max_epoch', type=int, default=201, help='Epoch to run [default: 201]')
 parser.add_argument('--batch_size', type=int, default=16, help='Batch Size during training [default: 32]')
 parser.add_argument('--learning_rate', type=float, default=0.001, help='Initial learning rate [default: 0.001]')
 parser.add_argument('--momentum', type=float, default=0.9, help='Initial learning rate [default: 0.9]')
 parser.add_argument('--optimizer', default='adam', help='adam or momentum [default: adam]')
 parser.add_argument('--decay_step', type=int, default=200000, help='Decay step for lr decay [default: 200000]')
 parser.add_argument('--decay_rate', type=float, default=0.7, help='Decay rate for lr decay [default: 0.7]')
+
 FLAGS = parser.parse_args()
 
-EPOCH_CNT = 0
-
+GPU_INDEX = FLAGS.gpu
 BATCH_SIZE = FLAGS.batch_size
 NUM_POINT = FLAGS.num_point
 MAX_EPOCH = FLAGS.max_epoch
+
 BASE_LEARNING_RATE = FLAGS.learning_rate
-GPU_INDEX = FLAGS.gpu
 MOMENTUM = FLAGS.momentum
 OPTIMIZER = FLAGS.optimizer
 DECAY_STEP = FLAGS.decay_step
 DECAY_RATE = FLAGS.decay_rate
 
-MODEL = importlib.import_module(FLAGS.model) # import network module
-MODEL_FILE = os.path.join(BASE_DIR, os.path.join('models', FLAGS.model+'.py'))
+# log begin
 LOG_DIR = FLAGS.log_dir
-if not os.path.exists(LOG_DIR): os.mkdir(LOG_DIR)
-os.system('cp %s %s' % (MODEL_FILE, LOG_DIR)) # bkp of model def
-os.system('cp train.py %s' % (LOG_DIR)) # bkp of train procedure
+if not os.path.exists(LOG_DIR):
+    os.mkdir(LOG_DIR)
+os.system( 'cp %s %s' % ( os.path.join(BASE_DIR, os.path.join('models', FLAGS.model+'.py')), LOG_DIR) )
+os.system('cp train.py %s' % (LOG_DIR))
 LOG_FOUT = open(os.path.join(LOG_DIR, 'log_train.txt'), 'w')
-LOG_FOUT_RES = open(os.path.join(LOG_DIR, 'log_accuracy.txt'), 'w')
 LOG_FOUT.write(str(FLAGS)+'\n')
+LOG_FOUT_RES = open(os.path.join(LOG_DIR, 'log_accuracy.txt'), 'w')
 
 
+#########################################################################################################
+######################################     parma    #####################################################
+#########################################################################################################
+
+EPOCH_CNT = 0 # counter for evaluate
+NUM_CLASSES = 21 # class num
 BN_INIT_DECAY = 0.5
 BN_DECAY_DECAY_RATE = 0.5
 BN_DECAY_DECAY_STEP = float(DECAY_STEP)
 BN_DECAY_CLIP = 0.99
 
+# load network module
+MODEL = importlib.import_module(FLAGS.model)
 
-NUM_CLASSES = 21
-
-# Shapenet official train/test split
-DATA_PATH = os.path.join('/home/u/pointnet2/data', 'scannet_data_pointnet2')
-
-TRAIN_DATASET = scannet_dataset.ScannetDataset(root=DATA_PATH, npoints=NUM_POINT, split='train')
-TEST_DATASET = scannet_dataset.ScannetDataset(root=DATA_PATH, npoints=NUM_POINT, split='test')
-TEST_DATASET_WHOLE_SCENE = scannet_dataset.ScannetDatasetWholeScene(root=DATA_PATH, npoints=NUM_POINT, split='test')
+# load data
+DATA_PATH = '/home/u0/data/pointnet-scannet/'
+TRAIN_DATASET = scannet_dataset.ScannetDataset(root=DATA_PATH, npoints=NUM_POINT, split='train', file='10')
+TEST_DATASET = scannet_dataset.ScannetDataset(root=DATA_PATH, npoints=NUM_POINT, split='test', file='10')
+TEST_DATASET_WHOLE_SCENE = scannet_dataset.ScannetDatasetWholeScene(root=DATA_PATH, npoints=NUM_POINT, split='test', file='10')
 
 
 def log_string(out_str):
     LOG_FOUT.write(out_str+'\n')
     LOG_FOUT.flush()
     print(out_str)
+
+
+#########################################################################################################
+######################################     works code    ################################################
+#########################################################################################################
 
 def get_learning_rate(batch):
     learning_rate = tf.train.exponential_decay(
@@ -166,17 +178,17 @@ def train():
 
             train_one_epoch(sess, ops, train_writer)
             if epoch%10==0:
-                # acc = eval_one_epoch(sess, ops, test_writer)
-                acc = eval_whole_scene_one_epoch(sess, ops, test_writer)
-            # if acc > best_acc:
-            #     best_acc = acc
-            #     save_path = saver.save(sess, os.path.join(LOG_DIR, "best_model_epoch_%03d.ckpt"%(epoch)))
-            #     log_string("Model saved in file: %s" % save_path)
+                acc = eval_one_epoch(sess, ops, test_writer)
+                # acc = eval_whole_scene_one_epoch(sess, ops, test_writer)
+            if acc > best_acc:
+                best_acc = acc
+                save_path = saver.save(sess, os.path.join(LOG_DIR, "best_model_epoch_%03d.ckpt"%(epoch)))
+                log_string("Model saved in file: %s" % save_path)
 
             # Save the variables to disk.
-            if epoch % 100 == 0:
-                save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt"))
-                log_string("Model saved in file: %s" % save_path)
+            # if epoch % 100 == 0:
+            #     save_path = saver.save(sess, os.path.join(LOG_DIR, "model.ckpt"))
+            #     log_string("Model saved in file: %s" % save_path)
 
 def get_batch_wdp(dataset, idxs, start_idx, end_idx):
     bsize = end_idx-start_idx
